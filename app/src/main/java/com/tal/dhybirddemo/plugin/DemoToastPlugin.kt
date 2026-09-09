@@ -12,6 +12,9 @@ import org.json.JSONObject
 class DemoToastPlugin(private val activity: Activity) : BridgePlugin {
     override fun name(): String = "common.showToast"
 
+    override fun executionThread(): BridgePlugin.ExecutionThread =
+        BridgePlugin.ExecutionThread.MAIN
+
     override fun execute(request: BridgeRequest, responder: BridgeResponder) {
         val data = request.data
         val title = data.optString("message", data.optString("title"))

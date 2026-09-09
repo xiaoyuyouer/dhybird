@@ -30,6 +30,8 @@
         .tag.off { background: #fee2e2; color: #991b1b; }
         .muted { color: #64748b; font-size: 13px; }
         .event { background: #eff6ff; border-radius: 10px; color: #1d4ed8; font-size: 13px; line-height: 1.5; margin-top: 12px; padding: 10px; word-break: break-word; }
+        .progress { background: #e2e8f0; border-radius: 999px; height: 10px; margin-top: 12px; overflow: hidden; }
+        .progress span { background: #2563eb; display: block; height: 100%; transition: width .2s ease; }
         .feature-list { color: #475569; font-size: 13px; line-height: 1.8; margin: 10px 0 0; padding-left: 20px; }
         pre { background: #0f172a; border-radius: 12px; color: #dbeafe; font-size: 12px; line-height: 1.55; margin: 0; max-height: 260px; min-height: 80px; overflow: auto; padding: 12px; white-space: pre-wrap; word-break: break-word; }
         .log-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
@@ -63,14 +65,22 @@
                 <button @click="callPromiseApi">Promise Toast</button>
                 <button @click="checkPlugins">检查插件能力</button>
                 <button class="secondary" @click="callDeviceInfo">设备信息插件</button>
+                <button class="secondary" @click="callLongTask">连续响应任务</button>
                 <button class="secondary" @click="callMissingPlugin">测试未知插件</button>
                 <button class="secondary" @click="callInvalidArgument">测试参数校验</button>
             </div>
             <ul class="feature-list">
                 <li>invoke()：Promise 调用宿主 App 注册的插件</li>
                 <li>checkAvailable：返回插件名称和可用状态</li>
+                <li>onProgress()：接收 complete=false 的连续响应进度</li>
                 <li>错误处理：演示未知插件和非法参数的 reject</li>
             </ul>
+        </section>
+
+        <section class="card">
+            <h2>连续响应与进度</h2>
+            <p class="muted">{{ progress === null ? '点击按钮观察中间进度，最终 Promise 只在 complete=true 时完成。' : '当前进度：' + progress + '%' }}</p>
+            <div class="progress"><span :style="{ width: (progress || 0) + '%' }"></span></div>
         </section>
 
         <section class="card">
@@ -100,7 +110,7 @@
     (function () {
         'use strict';
 
-        var CHECK_LIST = ['common.showToast', 'common.checkAvailable', 'demo.getDeviceInfo', 'user.getToken'];
+        var CHECK_LIST = ['common.showToast', 'common.checkAvailable', 'demo.getDeviceInfo', 'demo.longTask', 'user.getToken'];
 
         function stringify(value) {
             if (value === undefined) return 'undefined';
@@ -122,7 +132,8 @@
                     bridgeError: '',
                     eventSubscribed: false,
                     eventCount: 0,
-                    removeEvent: null
+                    removeEvent: null,
+                    progress: null
                 };
             },
             mounted: function () {
@@ -226,6 +237,25 @@
                     this.runInvoke('自定义设备信息插件', 'demo.getDeviceInfo', { from: 'vue-demo' });
                 },
 
+                callLongTask: function () {
+                    var self = this;
+                    this.bridgeError = '';
+                    this.progress = 0;
+                    this.appendLog('连续响应任务调用开始');
+                    var task = dhsdk.invoke('demo.longTask', { from: 'vue-demo' });
+                    task.onProgress(function (data) {
+                        self.progress = data && data.progress || 0;
+                        self.appendLog('收到连续响应进度', data);
+                    });
+                    task.then(function (result) {
+                        self.progress = result && result.progress || 100;
+                        self.appendLog('连续响应任务完成', result);
+                    }).catch(function (error) {
+                        self.appendLog('连续响应任务失败', error);
+                        self.bridgeError = errorText(error);
+                    });
+                },
+
                 callMissingPlugin: function () {
                     this.runInvoke('错误处理测试', 'demo.notRegistered', {});
                 },
@@ -239,6 +269,7 @@
                     this.bridgeError = '';
                     this.lastEvent = null;
                     this.eventCount = 0;
+                    this.progress = null;
                 }
             }
         }).mount('#app');

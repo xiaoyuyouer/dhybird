@@ -60,7 +60,6 @@ class PluginRegistry {
 
         try {
             when (executionThread) {
-                BridgePlugin.ExecutionThread.CALLER -> task.run()
                 BridgePlugin.ExecutionThread.BACKGROUND -> backgroundExecutor.execute(task)
                 BridgePlugin.ExecutionThread.MAIN -> {
                     if (Looper.myLooper() == Looper.getMainLooper()) task.run()

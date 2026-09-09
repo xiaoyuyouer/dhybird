@@ -7,6 +7,11 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.util.ArrayDeque
 import java.util.Queue
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Bridge 的运行时状态机和 Native -> H5 响应通道。
@@ -28,6 +33,10 @@ class BridgeRuntime(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pendingResponses: Queue<PendingScript> = ArrayDeque()
+    /** WebMessageListener 回调在主线程触发，统一交给单线程队列解析并派发，保证请求顺序。 */
+    private val requestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    /** 当前文档仍可能返回结果的请求，用于 reload/destroy 时取消长任务。 */
+    private val activeResponses = ConcurrentHashMap<String, Response>()
     private var webView: WebView? = webView
     private var state = State.CREATED
     private var documentGeneration = 0L
@@ -37,12 +46,16 @@ class BridgeRuntime(
 
     /** 页面开始加载，清理上一个文档遗留的待发送响应。 */
     fun onPageStarted() {
-        synchronized(this) {
+        val responsesToCancel = synchronized(this) {
             if (state == State.DESTROYED) return
             state = State.DOCUMENT_LOADING
             documentGeneration += 1
             pendingResponses.clear()
+            val oldResponses = activeResponses.values.toList()
+            activeResponses.clear()
+            oldResponses
         }
+        responsesToCancel.forEach { it.cancel() }
     }
 
     /** 页面加载完成，允许把 Native 响应刷回 H5。 */
@@ -60,18 +73,32 @@ class BridgeRuntime(
             if (state == State.DESTROYED) return
             documentGeneration
         }
-        val request = try {
-            BridgeRequest.parse(rawMessage)
-        } catch (error: JSONException) {
-            sendError(
-                extractCallbackId(rawMessage),
-                generation,
-                "INVALID_MESSAGE",
-                error.message
-            )
-            return
+        try {
+            requestExecutor.execute {
+                val isCurrent = synchronized(this) {
+                    state != State.DESTROYED && generation == documentGeneration
+                }
+                if (!isCurrent) return@execute
+
+                val request = try {
+                    BridgeRequest.parse(rawMessage)
+                } catch (error: JSONException) {
+                    sendError(
+                        extractCallbackId(rawMessage),
+                        generation,
+                        "INVALID_MESSAGE",
+                        error.message
+                    )
+                    return@execute
+                }
+
+                val response = Response(request.callbackId, generation)
+                if (!registerResponse(response)) return@execute
+                pluginRegistry.dispatch(request, response)
+            }
+        } catch (_: RejectedExecutionException) {
+            // Runtime 已销毁，当前页面也不存在可接收错误的 Bridge。
         }
-        pluginRegistry.dispatch(request, Response(request.callbackId, generation))
     }
 
     /** 向 H5 发送独立事件，不复用请求响应的 callbackId。 */
@@ -94,13 +121,28 @@ class BridgeRuntime(
 
     /** 标记为销毁状态，丢弃队列并停止插件后台执行器。 */
     fun destroy() {
-        synchronized(this) {
+        val responsesToCancel = synchronized(this) {
             state = State.DESTROYED
             documentGeneration += 1
             pendingResponses.clear()
+            val oldResponses = activeResponses.values.toList()
+            activeResponses.clear()
             webView = null
+            requestExecutor.shutdownNow()
+            oldResponses
         }
+        responsesToCancel.forEach { it.cancel() }
         pluginRegistry.shutdown()
+    }
+
+    private fun registerResponse(response: Response): Boolean {
+        synchronized(this) {
+            if (state == State.DESTROYED || response.generation != documentGeneration) {
+                return false
+            }
+            activeResponses[response.callbackId] = response
+            return true
+        }
     }
 
     private fun sendError(
@@ -162,9 +204,18 @@ class BridgeRuntime(
     )
 
     private inner class Response(
-        private val callbackId: String,
-        private val generation: Long
+        val callbackId: String,
+        val generation: Long
     ) : BridgeResponder {
+        private val cancelled = AtomicBoolean(false)
+
+        override val isCancelled: Boolean
+            get() = cancelled.get()
+
+        fun cancel() {
+            cancelled.set(true)
+        }
+
         override fun success(data: JSONObject?) {
             success(data, true)
         }
@@ -196,6 +247,7 @@ class BridgeRuntime(
             errorMessage: String?,
             data: JSONObject?
         ) {
+            if (cancelled.get()) return
             val response = JSONObject()
             val safeErrorCode = errorCode?.trim().takeIf { !it.isNullOrEmpty() } ?: "NATIVE_ERROR"
             val safeErrorMessage = errorMessage
@@ -219,6 +271,9 @@ class BridgeRuntime(
                 )
             } catch (_: JSONException) {
                 return
+            }
+            if (complete) {
+                activeResponses.remove(callbackId, this)
             }
             enqueueOrEvaluate("window.__dhybirdHandleResponse($response);", generation)
         }

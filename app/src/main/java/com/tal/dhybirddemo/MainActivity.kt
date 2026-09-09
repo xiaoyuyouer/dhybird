@@ -12,6 +12,7 @@ import com.dahai.dhybird.HybridConfig
 import com.dahai.dhybird.HybridController
 import com.tal.dhybirddemo.plugin.DemoCheckAvailablePlugin
 import com.tal.dhybirddemo.plugin.DemoDeviceInfoPlugin
+import com.tal.dhybirddemo.plugin.DemoLongTaskPlugin
 import com.tal.dhybirddemo.plugin.DemoToastPlugin
 
 class MainActivity : AppCompatActivity(), HybridCallbacks {
@@ -46,6 +47,7 @@ class MainActivity : AppCompatActivity(), HybridCallbacks {
             controller.registerPlugin(DemoToastPlugin(this))
             controller.registerPlugin(DemoCheckAvailablePlugin(controller.getPluginRegistry()))
             controller.registerPlugin(DemoDeviceInfoPlugin())
+            controller.registerPlugin(DemoLongTaskPlugin())
         }
         hybridController?.start()
 

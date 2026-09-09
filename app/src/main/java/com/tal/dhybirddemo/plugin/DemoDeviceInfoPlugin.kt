@@ -10,9 +10,6 @@ import org.json.JSONObject
 class DemoDeviceInfoPlugin : BridgePlugin {
     override fun name(): String = "demo.getDeviceInfo"
 
-    override fun executionThread(): BridgePlugin.ExecutionThread =
-        BridgePlugin.ExecutionThread.CALLER
-
     override fun execute(request: BridgeRequest, responder: BridgeResponder) {
         val result = JSONObject()
             .put("manufacturer", Build.MANUFACTURER)

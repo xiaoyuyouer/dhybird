@@ -55,7 +55,8 @@ dhybird/
             ├── MainActivity.kt                 # Demo 容器初始化
             └── plugin/                         # Demo 自己提供的插件
                 ├── DemoToastPlugin.kt
-                └── DemoCheckAvailablePlugin.kt
+                ├── DemoCheckAvailablePlugin.kt
+                └── DemoLongTaskPlugin.kt
 ~~~
 
 dhsdk.js 位于 Library 的 assets 中，会随 dhybird AAR 一起打包。宿主 App 不需要复制 SDK 文件，只需要提供自己的 H5 页面和插件实现。
@@ -80,8 +81,9 @@ Android WebMessageListener
   │
   ▼
 BridgeRuntime
-  ├── 解析 BridgeRequest
+  ├── 后台串行解析 BridgeRequest
   ├── 管理当前文档状态
+  ├── 取消 reload/destroy 后的未完成请求
   └── 通过 evaluateJavascript 返回结果/事件
   │
   ▼
@@ -289,6 +291,21 @@ try {
 }
 ~~~
 
+如果 Native 需要分阶段返回结果，可以在 Promise 上注册 `onProgress`。中间响应不会结束 Promise，只有 `complete=true` 的最终响应会 resolve：
+
+~~~javascript
+const task = dhsdk.invoke('demo.longTask', { from: 'react-page' });
+
+task.onProgress(progress => {
+  console.log('任务进度', progress.stage, progress.progress);
+});
+
+const finalResult = await task;
+console.log('任务完成', finalResult);
+~~~
+
+`onProgress` 只接收 Native 使用 `responder.success(data, false)` 返回的数据；普通一次性调用不需要注册进度监听。
+
 SDK 不提供 dhsdk.showToast()、dhsdk.login() 等业务快捷方法。即使某个宿主 App 注册了 common.showToast，H5 也应该显式调用：
 
 ~~~javascript
@@ -346,7 +363,7 @@ useEffect(() => {
 interface BridgePlugin {
     fun name(): String
 
-    fun executionThread(): ExecutionThread = ExecutionThread.MAIN
+    fun executionThread(): ExecutionThread = ExecutionThread.BACKGROUND
 
     fun execute(
         request: BridgeRequest,
@@ -361,9 +378,6 @@ interface BridgePlugin {
 class DeviceInfoPlugin : BridgePlugin {
     override fun name() = "demo.getDeviceInfo"
 
-    override fun executionThread() =
-        BridgePlugin.ExecutionThread.CALLER
-
     override fun execute(
         request: BridgeRequest,
         responder: BridgeResponder
@@ -375,6 +389,21 @@ class DeviceInfoPlugin : BridgePlugin {
             .put("received", request.data)
 
         responder.success(result)
+    }
+}
+~~~
+
+插件执行完成后，通过 `BridgeResponder` 返回结果。页面 reload 或容器销毁时，`responder.isCancelled` 会变成 `true`；长任务应在循环或阶段边界检查它：
+
+~~~kotlin
+override fun execute(request: BridgeRequest, responder: BridgeResponder) {
+    for (step in loadSteps()) {
+        if (responder.isCancelled) return
+        responder.success(JSONObject().put("step", step), complete = false)
+    }
+
+    if (!responder.isCancelled) {
+        responder.success(JSONObject().put("finished", true))
     }
 }
 ~~~
@@ -402,7 +431,6 @@ demo.getDeviceInfo
 
 ~~~kotlin
 enum class ExecutionThread {
-    CALLER,
     MAIN,
     BACKGROUND
 }
@@ -410,11 +438,10 @@ enum class ExecutionThread {
 
 | 线程 | 适用场景 |
 | --- | --- |
-| CALLER | 很短的纯计算；不要执行 UI、网络或耗时 I/O |
 | MAIN | Toast、Activity、View、权限请求和其他 UI 操作 |
 | BACKGROUND | 网络、文件、数据库和耗时计算 |
 
-插件必须自己保证线程安全。BridgeRuntime 的消息入口不能直接当成 UI 线程使用。
+默认线程是 BACKGROUND。只有需要操作 Toast、Activity、View 或发起权限请求的插件才声明 MAIN。WebMessageListener 的入口只负责接收消息，BridgeRuntime 会在后台串行队列中完成 JSON 解析和插件分发；插件仍然必须自己保证线程安全。
 
 ### 返回成功和失败
 
@@ -452,6 +479,8 @@ responder.success(finalJson, true)
 ~~~
 
 H5 Promise 在最终 complete = true 的响应到达后 resolve。普通插件只需要调用不带 complete 参数的 success() 或 failure()。
+
+Demo 中的 `demo.longTask` 是一个完整示例：它在后台线程发送多次 `complete=false` 进度，最后发送 `complete=true` 的终态结果。React 和 Vue 页面都提供了“连续响应任务”按钮。
 
 ## 配置说明
 
@@ -587,7 +616,8 @@ React 和 Vue Demo 覆盖相同的 Bridge 能力：
 - 框架组件挂载阶段调用 Bridge，验证首屏调用队列；
 - `dhsdk.ready()` 生命周期检查；
 - `dhsdk.invoke()` Promise 插件调用；
-- Toast、插件能力查询和设备信息插件；
+- Toast、插件能力查询、设备信息和连续响应插件；
+- `onProgress()` 连续响应进度监听；
 - 未知插件和非法参数的失败场景；
 - `dhsdk.on()` Native 事件订阅、取消订阅和事件次数统计；
 - 请求日志和插件调用结果。
@@ -665,4 +695,4 @@ dhybird/build/outputs/aar/dhybird-debug.aar
 - 默认 allOrigins() 只适合本地 Demo，生产环境必须配置 Origin 白名单；
 - React Demo 的 React 运行时依赖网络 CDN；
 - H5 与 Native 必须共同约定插件名、参数结构和返回结构，SDK 不会自动生成业务契约；
-- BridgeResponder 支持连续响应，但普通业务应优先使用一次成功或失败的终态响应。
+- BridgeResponder 支持连续响应，但普通业务应优先使用一次成功或失败的终态响应；长任务必须检查 `isCancelled`。

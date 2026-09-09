@@ -37,6 +37,21 @@
     };
   }
 
+  /**
+   * 让参数校验失败的 Promise 也具备统一的 onProgress 形状。
+   * 正常请求只有在 Native 发送 complete=false 时才会收到进度。
+   */
+  function rejectedPromise(error) {
+    var promise = Promise.reject(error);
+    promise.onProgress = function (listener) {
+      if (typeof listener !== 'function') {
+        throw new TypeError('progress listener is required');
+      }
+      return promise;
+    };
+    return promise;
+  }
+
   /** Bridge 协议只接受 JSON object 作为插件参数，避免 Native 静默丢失数组/标量。 */
   function isObjectData(value) {
     return Object.prototype.toString.call(value) === '[object Object]';
@@ -185,7 +200,7 @@
   /**
    * 保存一次请求的 Promise、超时和连续响应状态。
    *
-   * status=1 且 complete=0 表示“成功但还没结束”，Promise 会继续等待；
+   * status=1 且 complete=0 表示“成功但还没结束”，先通知 onProgress；
    * complete=1 时才 resolve。失败响应统一作为终态 reject。
    */
   function RequestStore(timeoutMs) {
@@ -203,10 +218,21 @@
     var record = {
       timer: null,
       resolve: resolvePromise,
-      reject: rejectPromise
+      reject: rejectPromise,
+      progressListeners: []
     };
     this.records[requestId] = record;
     this.armTimeout(requestId, record);
+    var self = this;
+    promise.onProgress = function (listener) {
+      if (typeof listener !== 'function') {
+        throw new TypeError('progress listener is required');
+      }
+      if (self.records[requestId] === record) {
+        record.progressListeners.push(listener);
+      }
+      return promise;
+    };
     return promise;
   };
 
@@ -236,10 +262,26 @@
       return;
     }
 
+    if (response.complete === 0) {
+      this.emitProgress(record, response.data);
+      return;
+    }
+
     if (response.complete !== 0) {
       record.resolve(response);
       this.remove(response.callbackId);
     }
+  };
+
+  /** 连续响应只通知监听器，不会提前 resolve 主 Promise。 */
+  RequestStore.prototype.emitProgress = function (record, data) {
+    record.progressListeners.slice().forEach(function (listener) {
+      try {
+        listener(data);
+      } catch (error) {
+        reportListenerError(error);
+      }
+    });
   };
 
   /** 主动结束请求，例如超时、队列溢出、传输失败或页面销毁。 */
@@ -260,6 +302,7 @@
     if (record.timer) {
       global.clearTimeout(record.timer);
     }
+    record.progressListeners.length = 0;
     delete this.records[requestId];
   };
 
@@ -367,16 +410,16 @@
   /** 创建请求；如果 transport 尚未 ready，就先进入 FIFO 队列。 */
   BridgeClient.prototype.invoke = function (plugin, data) {
     if (typeof plugin !== 'string' || plugin.trim() === '') {
-      return Promise.reject(createError('INVALID_REQUEST', 'plugin is required'));
+      return rejectedPromise(createError('INVALID_REQUEST', 'plugin is required'));
     }
     if (data !== undefined && data !== null && !isObjectData(data)) {
-      return Promise.reject(createError('INVALID_ARGUMENT', 'data must be an object'));
+      return rejectedPromise(createError('INVALID_ARGUMENT', 'data must be an object'));
     }
     if (this.state === State.FAILED) {
-      return Promise.reject(createError('TRANSPORT_UNAVAILABLE', 'Android WebMessageListener is unavailable'));
+      return rejectedPromise(createError('TRANSPORT_UNAVAILABLE', 'Android WebMessageListener is unavailable'));
     }
     if (this.state === State.DESTROYED) {
-      return Promise.reject(createError('BRIDGE_DESTROYED', 'Native bridge has been destroyed'));
+      return rejectedPromise(createError('BRIDGE_DESTROYED', 'Native bridge has been destroyed'));
     }
 
     var request = {
@@ -394,9 +437,12 @@
     }
     this.activate();
     this.flush();
-    return promise.then(function (response) {
+    var resultPromise = promise.then(function (response) {
       return response.data;
     });
+    // 对外 Promise 暴露同一个进度监听入口，业务不需要接触内部响应对象。
+    resultPromise.onProgress = promise.onProgress;
+    return resultPromise;
   };
 
   /** Bridge ready 后按 FIFO 顺序发送请求。 */
@@ -490,6 +536,9 @@
    *
    *   await dhsdk.ready();
    *   const data = await dhsdk.invoke('common.showToast', { message: 'hello' });
+   *   const task = dhsdk.invoke('demo.longTask', {});
+   *   task.onProgress(progress => console.log(progress));
+   *   await task;
    *   const device = await dhsdk.invoke('demo.getDeviceInfo', {});
    *   const unsubscribe = dhsdk.on('refreshToken', handler);
    */
