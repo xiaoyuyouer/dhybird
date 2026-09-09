@@ -20,7 +20,8 @@ class MainActivity : AppCompatActivity(), HybridCallbacks {
 
     private var hybridController: HybridController? = null
 
-    private val testUrl = "file:///android_asset/dhybird/react-demo.html"
+    private val reactDemoUrl = "file:///android_asset/dhybird/react-demo.html"
+    private val vueDemoUrl = "file:///android_asset/dhybird/vue-demo.html"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,7 +40,7 @@ class MainActivity : AppCompatActivity(), HybridCallbacks {
             .cookies(cookieMap)
             .debug(true)
             .allowFileAccess(true)
-            .url(testUrl)
+            .url(reactDemoUrl)
             .build()
         hybridController = HybridController(config, this).also { controller ->
             controller.registerPlugin(DemoToastPlugin(this))
@@ -48,6 +49,12 @@ class MainActivity : AppCompatActivity(), HybridCallbacks {
         }
         hybridController?.start()
 
+        findViewById<Button>(R.id.btn_react).setOnClickListener {
+            hybridController?.navigate(reactDemoUrl)
+        }
+        findViewById<Button>(R.id.btn_vue).setOnClickListener {
+            hybridController?.navigate(vueDemoUrl)
+        }
         findViewById<Button>(R.id.btn_sent).setOnClickListener {
             hybridController?.sendEventMessageToJS("refreshToken")
         }

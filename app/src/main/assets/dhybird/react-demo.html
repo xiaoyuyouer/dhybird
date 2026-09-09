@@ -226,7 +226,7 @@
                             : h('button', { onClick: function () { subscribeNativeEvents(true); } }, '重新订阅事件')
                     ),
                     lastEvent === null
-                        ? h('p', { className: 'muted' }, '点击 Android 页面底部的 sentEvent 按钮，观察 refreshToken 事件。')
+                        ? h('p', { className: 'muted' }, '点击 Android 页面底部的“事件”按钮，观察 refreshToken 事件。')
                         : h('div', { className: 'event' }, 'refreshToken：' + stringify(lastEvent))
                 ),
                 h('section', { className: 'card' },

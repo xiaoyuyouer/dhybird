@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="color-scheme" content="light">
+    <title>hybird Vue Bridge Demo</title>
+    <link rel="preconnect" href="https://unpkg.com">
+    <script src="./dhsdk.js"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <style>
+        :root { color: #172033; background: #f4f7fb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        button { border: 0; border-radius: 12px; color: #fff; background: #2563eb; cursor: pointer; font-size: 15px; padding: 12px 14px; }
+        button.secondary { background: #475569; }
+        button:active { opacity: .75; }
+        .page { margin: 0 auto; max-width: 720px; padding: 20px 16px 32px; }
+        .hero, .card { background: #fff; border-radius: 18px; box-shadow: 0 8px 28px rgba(15, 23, 42, .08); margin-bottom: 16px; padding: 18px; }
+        .hero h1 { font-size: 24px; margin: 0 0 8px; }
+        .hero p { color: #64748b; line-height: 1.6; margin: 0; }
+        .card h2 { font-size: 17px; margin: 0 0 12px; }
+        .actions { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .status { align-items: center; display: flex; gap: 8px; margin-top: 14px; }
+        .dot { background: #f59e0b; border-radius: 50%; height: 10px; width: 10px; }
+        .dot.ready { background: #16a34a; }
+        .dot.error { background: #dc2626; }
+        .tag { background: #e2e8f0; border-radius: 999px; color: #475569; display: inline-block; font-size: 12px; padding: 4px 9px; }
+        .tag.ready { background: #dcfce7; color: #166534; }
+        .tag.off { background: #fee2e2; color: #991b1b; }
+        .muted { color: #64748b; font-size: 13px; }
+        .event { background: #eff6ff; border-radius: 10px; color: #1d4ed8; font-size: 13px; line-height: 1.5; margin-top: 12px; padding: 10px; word-break: break-word; }
+        .feature-list { color: #475569; font-size: 13px; line-height: 1.8; margin: 10px 0 0; padding-left: 20px; }
+        pre { background: #0f172a; border-radius: 12px; color: #dbeafe; font-size: 12px; line-height: 1.55; margin: 0; max-height: 260px; min-height: 80px; overflow: auto; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+        .log-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <main class="page">
+        <section class="hero">
+            <h1>hybird Vue Bridge Demo</h1>
+            <p>用 Vue 3 页面验证 Bridge 的完整使用链路。</p>
+            <div class="status">
+                <span class="dot" :class="{ ready: ready && !bridgeError, error: !!bridgeError }"></span>
+                <span>{{ bridgeError ? 'Bridge 调用失败' : (ready ? 'Bridge Ready' : 'Bridge 初始化中') }}</span>
+            </div>
+            <div v-if="bridgeError" class="event">{{ bridgeError }}</div>
+        </section>
+
+        <section class="card">
+            <h2>Bridge 生命周期</h2>
+            <div class="actions">
+                <button @click="checkReady">再次检查 ready</button>
+                <button class="secondary" @click="logState">查看当前状态</button>
+            </div>
+            <p class="muted">页面挂载时会先调用插件，再调用 dhsdk.ready()，用于验证首屏调用队列。</p>
+        </section>
+
+        <section class="card">
+            <h2>H5 → Native 插件调用</h2>
+            <div class="actions">
+                <button @click="callPromiseApi">Promise Toast</button>
+                <button @click="checkPlugins">检查插件能力</button>
+                <button class="secondary" @click="callDeviceInfo">设备信息插件</button>
+                <button class="secondary" @click="callMissingPlugin">测试未知插件</button>
+                <button class="secondary" @click="callInvalidArgument">测试参数校验</button>
+            </div>
+            <ul class="feature-list">
+                <li>invoke()：Promise 调用宿主 App 注册的插件</li>
+                <li>checkAvailable：返回插件名称和可用状态</li>
+                <li>错误处理：演示未知插件和非法参数的 reject</li>
+            </ul>
+        </section>
+
+        <section class="card">
+            <h2>Native → Vue 事件</h2>
+            <div class="status">
+                <span class="tag" :class="eventSubscribed ? 'ready' : 'off'">{{ eventSubscribed ? '已订阅' : '未订阅' }}</span>
+                <span class="muted">refreshToken · 已接收 {{ eventCount }} 次</span>
+            </div>
+            <div class="actions">
+                <button class="secondary" @click="toggleEvent">{{ eventSubscribed ? '取消事件订阅' : '重新订阅事件' }}</button>
+            </div>
+            <p v-if="lastEvent === null" class="muted">点击 Android 页面底部的“事件”按钮，观察 refreshToken 事件。</p>
+            <div v-else class="event">refreshToken：{{ stringify(lastEvent) }}</div>
+        </section>
+
+        <section class="card">
+            <h2>运行日志</h2>
+            <div class="log-actions">
+                <button class="secondary" @click="clearLogs">清空日志</button>
+            </div>
+            <pre>{{ logs.length ? logs.join('\n\n') : '等待 Bridge 日志...' }}</pre>
+        </section>
+    </main>
+</div>
+
+<script>
+    (function () {
+        'use strict';
+
+        var CHECK_LIST = ['common.showToast', 'common.checkAvailable', 'demo.getDeviceInfo', 'user.getToken'];
+
+        function stringify(value) {
+            if (value === undefined) return 'undefined';
+            if (value === null) return 'null';
+            if (typeof value === 'string') return value;
+            try { return JSON.stringify(value, null, 2); } catch (error) { return String(value); }
+        }
+
+        function errorText(error) {
+            return error && (error.errorMessage || error.message || error.errorCode) || stringify(error);
+        }
+
+        Vue.createApp({
+            data: function () {
+                return {
+                    ready: false,
+                    logs: [],
+                    lastEvent: null,
+                    bridgeError: '',
+                    eventSubscribed: false,
+                    eventCount: 0,
+                    removeEvent: null
+                };
+            },
+            mounted: function () {
+                var self = this;
+                this.subscribeNativeEvents(false);
+
+                // 故意在 Vue mounted 阶段调用，验证页面挂载时 Bridge 已可排队处理请求。
+                dhsdk.invoke('common.checkAvailable', {
+                    available: CHECK_LIST
+                }).then(function (data) {
+                    self.appendLog('mounted 阶段 checkAvailable 成功', data);
+                }).catch(function (error) {
+                    self.appendLog('mounted 阶段 checkAvailable 失败', error);
+                    self.bridgeError = errorText(error);
+                });
+
+                dhsdk.ready().then(function () {
+                    self.ready = true;
+                    self.appendLog('dhsdk.ready() 完成');
+                }).catch(function (error) {
+                    self.bridgeError = errorText(error);
+                    self.appendLog('dhsdk.ready() 失败', error);
+                });
+            },
+            beforeUnmount: function () {
+                this.unsubscribeNativeEvents(false);
+            },
+            methods: {
+                stringify: stringify,
+
+                appendLog: function (label, value) {
+                    var line = new Date().toLocaleTimeString() + '  ' + label +
+                        (value === undefined ? '' : '\n' + stringify(value));
+                    this.logs = this.logs.concat(line).slice(-30);
+                },
+
+                subscribeNativeEvents: function (shouldLog) {
+                    var self = this;
+                    if (this.removeEvent) return;
+                    this.removeEvent = dhsdk.on('refreshToken', function (data) {
+                        self.lastEvent = data;
+                        self.eventCount += 1;
+                        self.appendLog('收到 Native refreshToken 事件', data);
+                    });
+                    this.eventSubscribed = true;
+                    if (shouldLog) this.appendLog('已订阅 refreshToken 事件');
+                },
+
+                unsubscribeNativeEvents: function (shouldLog) {
+                    if (!this.removeEvent) return;
+                    this.removeEvent();
+                    this.removeEvent = null;
+                    this.eventSubscribed = false;
+                    if (shouldLog) this.appendLog('已取消 refreshToken 事件订阅');
+                },
+
+                toggleEvent: function () {
+                    if (this.eventSubscribed) this.unsubscribeNativeEvents(true);
+                    else this.subscribeNativeEvents(true);
+                },
+
+                runInvoke: function (label, plugin, data) {
+                    var self = this;
+                    this.bridgeError = '';
+                    this.appendLog(label + ' 调用开始', { plugin: plugin, data: data });
+                    return dhsdk.invoke(plugin, data).then(function (result) {
+                        self.appendLog(label + ' 调用成功', result);
+                        return result;
+                    }).catch(function (error) {
+                        self.appendLog(label + ' 调用失败', error);
+                        self.bridgeError = errorText(error);
+                        return null;
+                    });
+                },
+
+                checkReady: function () {
+                    var self = this;
+                    this.bridgeError = '';
+                    dhsdk.ready().then(function () {
+                        self.ready = true;
+                        self.appendLog('dhsdk.ready() 检查成功');
+                    }).catch(function (error) {
+                        self.bridgeError = errorText(error);
+                        self.appendLog('dhsdk.ready() 检查失败', error);
+                    });
+                },
+
+                logState: function () {
+                    this.appendLog('当前 Bridge 状态', this.ready ? 'READY' : 'WAITING');
+                },
+
+                callPromiseApi: function () {
+                    this.runInvoke('Promise Toast', 'common.showToast', { message: '来自 Vue Promise 的 Toast' });
+                },
+
+                checkPlugins: function () {
+                    this.runInvoke('插件能力检查', 'common.checkAvailable', { available: CHECK_LIST });
+                },
+
+                callDeviceInfo: function () {
+                    this.runInvoke('自定义设备信息插件', 'demo.getDeviceInfo', { from: 'vue-demo' });
+                },
+
+                callMissingPlugin: function () {
+                    this.runInvoke('错误处理测试', 'demo.notRegistered', {});
+                },
+
+                callInvalidArgument: function () {
+                    this.runInvoke('参数校验测试', 'common.showToast', ['不允许使用数组参数']);
+                },
+
+                clearLogs: function () {
+                    this.logs = [];
+                    this.bridgeError = '';
+                    this.lastEvent = null;
+                    this.eventCount = 0;
+                }
+            }
+        }).mount('#app');
+    }());
+</script>
+</body>
+</html>

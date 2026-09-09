@@ -50,7 +50,7 @@ dhybird/
     └── src/main/
         ├── assets/dhybird/
         │   ├── react-demo.html                # React 示例页面
-        │   └── demo.html                      # 原生 HTML 示例页面
+        │   └── vue-demo.html                  # Vue 示例页面
         └── java/com/tal/dhybirddemo/
             ├── MainActivity.kt                 # Demo 容器初始化
             └── plugin/                         # Demo 自己提供的插件
@@ -576,21 +576,20 @@ BridgeAccessPolicy.allowlist(
 
 ## Demo 工程
 
-Demo 默认加载：
+Demo 宿主首页提供三个按钮：
 
-~~~text
-file:///android_asset/dhybird/react-demo.html
-~~~
+- `React Demo`：加载 `react-demo.html`；
+- `Vue Demo`：加载 `vue-demo.html`；
+- `事件`：向当前页面发送一次 `refreshToken` Native 事件。
 
-React Demo 覆盖：
+React 和 Vue Demo 覆盖相同的 Bridge 能力：
 
-- React 首次挂载阶段调用 Bridge；
-- dhsdk.ready() 生命周期检查和首屏调用队列；
-- Promise 请求和错误处理；
-- dhsdk.invoke() 调用 Toast、能力检查和设备信息插件；
+- 框架组件挂载阶段调用 Bridge，验证首屏调用队列；
+- `dhsdk.ready()` 生命周期检查；
+- `dhsdk.invoke()` Promise 插件调用；
+- Toast、插件能力查询和设备信息插件；
 - 未知插件和非法参数的失败场景；
-- Native refreshToken 事件回传；
-- 事件订阅、取消订阅和事件次数统计；
+- `dhsdk.on()` Native 事件订阅、取消订阅和事件次数统计；
 - 请求日志和插件调用结果。
 
 Demo 插件注册位置：
@@ -603,10 +602,10 @@ Demo H5 页面位置：
 
 ~~~text
 app/src/main/assets/dhybird/react-demo.html
-app/src/main/assets/dhybird/demo.html
+app/src/main/assets/dhybird/vue-demo.html
 ~~~
 
-React 页面通过 CDN 加载 React 18 UMD 文件，因此模拟器或真机需要访问 unpkg.com。如果需要完全离线运行，可以将 React UMD 文件放入 Demo assets 并改成本地引用。
+React 页面通过 CDN 加载 React 18 UMD 文件，Vue 页面通过 CDN 加载 Vue 3 UMD 文件，因此模拟器或真机需要访问 unpkg.com。如果需要完全离线运行，可以将对应的 UMD 文件放入 Demo assets 并改成本地引用。
 
 ## 构建与测试
 
