@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta name="color-scheme" content="light">
-    <title>hybird v2 React Bridge Demo</title>
+    <title>hybird React Bridge Demo</title>
     <link rel="preconnect" href="https://unpkg.com">
     <script src="./dhsdk.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -26,8 +26,12 @@
         .dot { background: #f59e0b; border-radius: 50%; height: 10px; width: 10px; }
         .dot.ready { background: #16a34a; }
         .dot.error { background: #dc2626; }
+        .tag { background: #e2e8f0; border-radius: 999px; color: #475569; display: inline-block; font-size: 12px; padding: 4px 9px; }
+        .tag.ready { background: #dcfce7; color: #166534; }
+        .tag.off { background: #fee2e2; color: #991b1b; }
         .muted { color: #64748b; font-size: 13px; }
         .event { background: #eff6ff; border-radius: 10px; color: #1d4ed8; font-size: 13px; line-height: 1.5; margin-top: 12px; padding: 10px; word-break: break-word; }
+        .feature-list { color: #475569; font-size: 13px; line-height: 1.8; margin: 10px 0 0; padding-left: 20px; }
         pre { background: #0f172a; border-radius: 12px; color: #dbeafe; font-size: 12px; line-height: 1.55; margin: 0; max-height: 260px; min-height: 80px; overflow: auto; padding: 12px; white-space: pre-wrap; word-break: break-word; }
         .log-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
     </style>
@@ -43,11 +47,17 @@
         var useEffect = React.useEffect;
         var useState = React.useState;
 
+        var CHECK_LIST = ['common.showToast', 'common.checkAvailable', 'demo.getDeviceInfo', 'user.getToken'];
+
         function stringify(value) {
             if (value === undefined) return 'undefined';
             if (value === null) return 'null';
             if (typeof value === 'string') return value;
-            try { return JSON.stringify(value); } catch (error) { return String(value); }
+            try { return JSON.stringify(value, null, 2); } catch (error) { return String(value); }
+        }
+
+        function errorText(error) {
+            return error && (error.errorMessage || error.message || error.errorCode) || stringify(error);
         }
 
         function App() {
@@ -63,6 +73,13 @@
             var errorState = useState('');
             var bridgeError = errorState[0];
             var setBridgeError = errorState[1];
+            var subscriptionState = useState(false);
+            var eventSubscribed = subscriptionState[0];
+            var setEventSubscribed = subscriptionState[1];
+            var eventCountState = useState(0);
+            var eventCount = eventCountState[0];
+            var setEventCount = eventCountState[1];
+            var eventUnsubscribe = React.useRef(null);
 
             function appendLog(label, value) {
                 var line = new Date().toLocaleTimeString() + '  ' + label +
@@ -70,76 +87,104 @@
                 setLogs(function (current) { return current.concat(line).slice(-30); });
             }
 
-            useEffect(function () {
-                var removeEvent = dhsdk.on('refreshToken', function (data) {
+            function subscribeNativeEvents(shouldLog) {
+                if (eventUnsubscribe.current) return;
+                eventUnsubscribe.current = dhsdk.on('refreshToken', function (data) {
                     setLastEvent(data);
+                    setEventCount(function (count) { return count + 1; });
                     appendLog('收到 Native refreshToken 事件', data);
                 });
+                setEventSubscribed(true);
+                if (shouldLog) appendLog('已订阅 refreshToken 事件');
+            }
+
+            function unsubscribeNativeEvents(shouldLog, updateState) {
+                if (!eventUnsubscribe.current) return;
+                eventUnsubscribe.current();
+                eventUnsubscribe.current = null;
+                if (updateState !== false) setEventSubscribed(false);
+                if (shouldLog) appendLog('已取消 refreshToken 事件订阅');
+            }
+
+            useEffect(function () {
+                subscribeNativeEvents(false);
 
                 // 故意在 React 首次挂载时调用，验证 mounted 阶段的 Bridge 行为。
                 dhsdk.invoke('common.checkAvailable', {
-                    available: ['common.showToast', 'common.checkAvailable', 'user.getToken']
+                    available: CHECK_LIST
                 }).then(function (data) {
                     appendLog('mounted 阶段 checkAvailable 成功', data);
                 }).catch(function (error) {
                     appendLog('mounted 阶段 checkAvailable 失败', error);
-                    setBridgeError(error.errorMessage || error.message || stringify(error));
+                    setBridgeError(errorText(error));
                 });
 
                 dhsdk.ready().then(function () {
                     setReady(true);
                     appendLog('dhsdk.ready() 完成');
                 }).catch(function (error) {
-                    setBridgeError(error.message || stringify(error));
+                    setBridgeError(errorText(error));
                     appendLog('dhsdk.ready() 失败', error);
                 });
 
-                return removeEvent;
+                return function () { unsubscribeNativeEvents(false, false); };
             }, []);
 
-            function callPromiseApi() {
+            function runInvoke(label, plugin, data) {
                 setBridgeError('');
-                appendLog('Promise 调用 common.showToast');
-                dhsdk.invoke('common.showToast', { message: '来自 React Promise 的 Toast' })
-                    .then(function (data) { appendLog('Promise 成功', data); })
-                    .catch(function (error) {
-                        appendLog('Promise 失败', error);
-                        setBridgeError(error.errorMessage || error.message || stringify(error));
-                    });
-            }
-
-            function checkPlugins() {
-                dhsdk.invoke('common.checkAvailable', {
-                    available: ['common.showToast', 'common.checkAvailable', 'user.getToken']
-                }).then(function (data) {
-                    appendLog('插件检查成功', data);
+                appendLog(label + ' 调用开始', { plugin: plugin, data: data });
+                return dhsdk.invoke(plugin, data).then(function (result) {
+                    appendLog(label + ' 调用成功', result);
+                    return result;
                 }).catch(function (error) {
-                    appendLog('插件检查失败', error);
-                    setBridgeError(error.errorMessage || error.message || stringify(error));
+                    appendLog(label + ' 调用失败', error);
+                    setBridgeError(errorText(error));
+                    return null;
                 });
             }
 
+            function checkReady() {
+                setBridgeError('');
+                dhsdk.ready().then(function () {
+                    setReady(true);
+                    appendLog('dhsdk.ready() 检查成功');
+                }).catch(function (error) {
+                    setBridgeError(errorText(error));
+                    appendLog('dhsdk.ready() 检查失败', error);
+                });
+            }
+
+            function callPromiseApi() {
+                runInvoke('Promise Toast', 'common.showToast', { message: '来自 React Promise 的 Toast' });
+            }
+
+            function checkPlugins() {
+                runInvoke('插件能力检查', 'common.checkAvailable', { available: CHECK_LIST });
+            }
+
             function callDeviceInfo() {
-                dhsdk.invoke('demo.getDeviceInfo', { from: 'react-demo' })
-                    .then(function (data) {
-                        appendLog('自定义插件 demo.getDeviceInfo 成功', data);
-                    })
-                    .catch(function (error) {
-                        appendLog('自定义插件调用失败', error);
-                        setBridgeError(error.errorMessage || error.message || stringify(error));
-                    });
+                runInvoke('自定义设备信息插件', 'demo.getDeviceInfo', { from: 'react-demo' });
+            }
+
+            function callMissingPlugin() {
+                runInvoke('错误处理测试', 'demo.notRegistered', {});
+            }
+
+            function callInvalidArgument() {
+                runInvoke('参数校验测试', 'common.showToast', ['不允许使用数组参数']);
             }
 
             function clearLogs() {
                 setLogs([]);
                 setBridgeError('');
                 setLastEvent(null);
+                setEventCount(0);
             }
 
             return h('main', { className: 'page' },
                 h('section', { className: 'hero' },
-                    h('h1', null, 'hybird v2 React Bridge Demo'),
-                    h('p', null, '验证 React 挂载阶段、Promise、自定义插件和 Native 事件通信。'),
+                    h('h1', null, 'hybird React Bridge Demo'),
+                    h('p', null, '用一个 React 页面验证 Bridge 的完整使用链路。'),
                     h('div', { className: 'status' },
                         h('span', { className: 'dot ' + (bridgeError ? 'error' : (ready ? 'ready' : '')) }),
                         h('span', null, bridgeError ? 'Bridge 调用失败' : (ready ? 'Bridge Ready' : 'Bridge 初始化中'))
@@ -147,21 +192,45 @@
                     bridgeError ? h('div', { className: 'event' }, bridgeError) : null
                 ),
                 h('section', { className: 'card' },
-                    h('h2', null, 'Native 调用'),
+                    h('h2', null, 'Bridge 生命周期'),
+                    h('div', { className: 'actions' },
+                        h('button', { onClick: checkReady }, '再次检查 ready'),
+                        h('button', { className: 'secondary', onClick: function () { appendLog('当前 Bridge 状态', ready ? 'READY' : 'WAITING'); } }, '查看当前状态')
+                    ),
+                    h('p', { className: 'muted' }, '页面挂载时会先调用插件，再调用 dhsdk.ready()，用于验证首屏调用队列。')
+                ),
+                h('section', { className: 'card' },
+                    h('h2', null, 'H5 → Native 插件调用'),
                     h('div', { className: 'actions' },
                         h('button', { onClick: callPromiseApi }, 'Promise Toast'),
                         h('button', { onClick: checkPlugins }, '检查插件能力'),
-                        h('button', { className: 'secondary', onClick: callDeviceInfo }, '调用自定义插件')
+                        h('button', { className: 'secondary', onClick: callDeviceInfo }, '设备信息插件'),
+                        h('button', { className: 'secondary', onClick: callMissingPlugin }, '测试未知插件'),
+                        h('button', { className: 'secondary', onClick: callInvalidArgument }, '测试参数校验')
                     ),
-                    h('p', { className: 'muted' }, '页面首次挂载时已自动调用 checkAvailable，用于验证首屏时序。')
+                    h('ul', { className: 'feature-list' },
+                        h('li', null, 'invoke()：Promise 调用宿主 App 注册的插件'),
+                        h('li', null, 'checkAvailable：返回插件名称和可用状态'),
+                        h('li', null, '错误处理：演示未知插件和非法参数的 reject')
+                    )
                 ),
                 h('section', { className: 'card' },
                     h('h2', null, 'Native → React 事件'),
+                    h('div', { className: 'status' },
+                        h('span', { className: 'tag ' + (eventSubscribed ? 'ready' : 'off') }, eventSubscribed ? '已订阅' : '未订阅'),
+                        h('span', { className: 'muted' }, 'refreshToken · 已接收 ' + eventCount + ' 次')
+                    ),
+                    h('div', { className: 'actions' },
+                        eventSubscribed
+                            ? h('button', { className: 'secondary', onClick: function () { unsubscribeNativeEvents(true); } }, '取消事件订阅')
+                            : h('button', { onClick: function () { subscribeNativeEvents(true); } }, '重新订阅事件')
+                    ),
                     lastEvent === null
                         ? h('p', { className: 'muted' }, '点击 Android 页面底部的 sentEvent 按钮，观察 refreshToken 事件。')
                         : h('div', { className: 'event' }, 'refreshToken：' + stringify(lastEvent))
                 ),
                 h('section', { className: 'card' },
+                    h('h2', null, '运行日志'),
                     h('div', { className: 'log-actions' },
                         h('button', { className: 'secondary', onClick: clearLogs }, '清空日志')
                     ),

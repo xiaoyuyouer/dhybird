@@ -585,9 +585,12 @@ file:///android_asset/dhybird/react-demo.html
 React Demo 覆盖：
 
 - React 首次挂载阶段调用 Bridge；
+- dhsdk.ready() 生命周期检查和首屏调用队列；
 - Promise 请求和错误处理；
 - dhsdk.invoke() 调用 Toast、能力检查和设备信息插件；
+- 未知插件和非法参数的失败场景；
 - Native refreshToken 事件回传；
+- 事件订阅、取消订阅和事件次数统计；
 - 请求日志和插件调用结果。
 
 Demo 插件注册位置：
