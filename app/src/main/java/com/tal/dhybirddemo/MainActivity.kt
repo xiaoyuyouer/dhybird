@@ -7,67 +7,90 @@ import android.webkit.ValueCallback
 import android.widget.Button
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
-import com.dahai.dhybird.DHybird
+import com.dahai.dhybird.HybridCallbacks
+import com.dahai.dhybird.HybridConfig
+import com.dahai.dhybird.HybridController
+import com.tal.dhybirddemo.plugin.DemoCheckAvailablePlugin
+import com.tal.dhybirddemo.plugin.DemoDeviceInfoPlugin
+import com.tal.dhybirddemo.plugin.DemoToastPlugin
 
-class MainActivity : AppCompatActivity(), DHybird.IDHybird {
+class MainActivity : AppCompatActivity(), HybridCallbacks {
 
     private lateinit var containerView: FrameLayout
 
-    private var dHybird: DHybird? = null
+    private var hybridController: HybridController? = null
 
-    private val testUrl = "https://mp.weixin.qq.com/s/psqx5AdOFP-gIQBw8zcMZw"
+    private val testUrl = "file:///android_asset/dhybird/react-demo.html"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         containerView = findViewById(R.id.layout_fl)
-        initDHybird()
+        initHybrid()
     }
 
-    private fun initDHybird() {
-        val hybirdUrl = "https://threepiece-app.test-dahai.com/qingwen/common_questions?course=%7B%22normal%22%3A0,%22excellent%22%3A0%7D&utm_source=dahai_app_parent"
+    private fun initHybrid() {
         val cookieMap = HashMap<String,String>()
         cookieMap["test11"] = "232"
         cookieMap["test12"] = "433"
 
-        dHybird = DHybird.Builder()
-            .with(this)
-            .setCore(DHybird.CORE_NATIVE)
-            .setContainer(containerView)
-            .setIDHybird(this)
-            .setCookies(cookieMap)
-            .go(testUrl)
+        val config = HybridConfig.Builder(this)
+            .container(containerView)
+            .cookies(cookieMap)
+            .debug(true)
+            .allowFileAccess(true)
+            .url(testUrl)
             .build()
+        hybridController = HybridController(config, this).also { controller ->
+            controller.registerPlugin(DemoToastPlugin(this))
+            controller.registerPlugin(DemoCheckAvailablePlugin(controller.getPluginRegistry()))
+            controller.registerPlugin(DemoDeviceInfoPlugin())
+        }
+        hybridController?.start()
 
         findViewById<Button>(R.id.btn_sent).setOnClickListener {
-            dHybird!!.sendEventMessageToJS("refreshToken", null)
+            hybridController?.sendEventMessageToJS("refreshToken", null)
         }
     }
 
-    override fun pageLoadProgress(progress: Int) {
+    override fun onPageLoadProgress(progress: Int) {
     }
 
-    override fun webViewTitle(title: String?) {
+    override fun onTitleChanged(title: String?) {
        Log.e("MainActivity","webViewTitle:$title")
     }
 
-    override fun selectFile(valueCallback: ValueCallback<Array<Uri>>?) {
+    override fun onSelectFile(callback: ValueCallback<Array<Uri>>?) {
+        callback?.onReceiveValue(null)
     }
 
-    override fun onLoadError() {
+    override fun onPageLoadError() {
         Log.e("magic", "onLoadError")
     }
 
-    override fun docDownloadFinish(path: String?) {
+    override fun onDocumentDownloaded(path: String?) {
     }
 
     override fun onBackPressed() {
-        dHybird?.canGoBack()?.apply {
-            if (this) {
-                dHybird!!.goBack()
-            } else {
-                super.onBackPressed()
-            }
+        if (hybridController?.canGoBack() == true) {
+            hybridController?.goBack()
+        } else {
+            super.onBackPressed()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hybridController?.onResume()
+    }
+
+    override fun onPause() {
+        hybridController?.onPause()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        hybridController?.destroy()
+        super.onDestroy()
     }
 }

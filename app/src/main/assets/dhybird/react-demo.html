@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="color-scheme" content="light">
+    <title>hybird v2 React Bridge Demo</title>
+    <link rel="preconnect" href="https://unpkg.com">
+    <script src="./dhsdk.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <style>
+        :root { color: #172033; background: #f4f7fb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        button { border: 0; border-radius: 12px; color: #fff; background: #2563eb; cursor: pointer; font-size: 15px; padding: 12px 14px; }
+        button.secondary { background: #475569; }
+        button:active { opacity: .75; }
+        .page { margin: 0 auto; max-width: 720px; padding: 20px 16px 32px; }
+        .hero, .card { background: #fff; border-radius: 18px; box-shadow: 0 8px 28px rgba(15, 23, 42, .08); margin-bottom: 16px; padding: 18px; }
+        .hero h1 { font-size: 24px; margin: 0 0 8px; }
+        .hero p { color: #64748b; line-height: 1.6; margin: 0; }
+        .card h2 { font-size: 17px; margin: 0 0 12px; }
+        .actions { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .status { align-items: center; display: flex; gap: 8px; margin-top: 14px; }
+        .dot { background: #f59e0b; border-radius: 50%; height: 10px; width: 10px; }
+        .dot.ready { background: #16a34a; }
+        .dot.error { background: #dc2626; }
+        .muted { color: #64748b; font-size: 13px; }
+        .event { background: #eff6ff; border-radius: 10px; color: #1d4ed8; font-size: 13px; line-height: 1.5; margin-top: 12px; padding: 10px; word-break: break-word; }
+        pre { background: #0f172a; border-radius: 12px; color: #dbeafe; font-size: 12px; line-height: 1.55; margin: 0; max-height: 260px; min-height: 80px; overflow: auto; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+        .log-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+    (function () {
+        'use strict';
+
+        var h = React.createElement;
+        var useEffect = React.useEffect;
+        var useState = React.useState;
+
+        function stringify(value) {
+            if (value === undefined) return 'undefined';
+            if (value === null) return 'null';
+            if (typeof value === 'string') return value;
+            try { return JSON.stringify(value); } catch (error) { return String(value); }
+        }
+
+        function App() {
+            var readyState = useState(false);
+            var ready = readyState[0];
+            var setReady = readyState[1];
+            var logState = useState([]);
+            var logs = logState[0];
+            var setLogs = logState[1];
+            var eventState = useState(null);
+            var lastEvent = eventState[0];
+            var setLastEvent = eventState[1];
+            var errorState = useState('');
+            var bridgeError = errorState[0];
+            var setBridgeError = errorState[1];
+
+            function appendLog(label, value) {
+                var line = new Date().toLocaleTimeString() + '  ' + label +
+                    (value === undefined ? '' : '\n' + stringify(value));
+                setLogs(function (current) { return current.concat(line).slice(-30); });
+            }
+
+            useEffect(function () {
+                var removeEvent = dhsdk.on('refreshToken', function (data) {
+                    setLastEvent(data);
+                    appendLog('收到 Native refreshToken 事件', data);
+                });
+
+                // 故意在 React 首次挂载时调用，验证 mounted 阶段的 Bridge 行为。
+                dhsdk.invoke('common.checkAvailable', {
+                    available: ['common.showToast', 'common.checkAvailable', 'user.getToken']
+                }).then(function (data) {
+                    appendLog('mounted 阶段 checkAvailable 成功', data);
+                }).catch(function (error) {
+                    appendLog('mounted 阶段 checkAvailable 失败', error);
+                    setBridgeError(error.errorMessage || error.message || stringify(error));
+                });
+
+                dhsdk.ready().then(function () {
+                    setReady(true);
+                    appendLog('dhsdk.ready() 完成');
+                }).catch(function (error) {
+                    setBridgeError(error.message || stringify(error));
+                    appendLog('dhsdk.ready() 失败', error);
+                });
+
+                return removeEvent;
+            }, []);
+
+            function callPromiseApi() {
+                setBridgeError('');
+                appendLog('Promise 调用 common.showToast');
+                dhsdk.invoke('common.showToast', { message: '来自 React Promise 的 Toast' })
+                    .then(function (data) { appendLog('Promise 成功', data); })
+                    .catch(function (error) {
+                        appendLog('Promise 失败', error);
+                        setBridgeError(error.errorMessage || error.message || stringify(error));
+                    });
+            }
+
+            function checkPlugins() {
+                dhsdk.invoke('common.checkAvailable', {
+                    available: ['common.showToast', 'common.checkAvailable', 'user.getToken']
+                }).then(function (data) {
+                    appendLog('插件检查成功', data);
+                }).catch(function (error) {
+                    appendLog('插件检查失败', error);
+                    setBridgeError(error.errorMessage || error.message || stringify(error));
+                });
+            }
+
+            function callDeviceInfo() {
+                dhsdk.invoke('demo.getDeviceInfo', { from: 'react-demo' })
+                    .then(function (data) {
+                        appendLog('自定义插件 demo.getDeviceInfo 成功', data);
+                    })
+                    .catch(function (error) {
+                        appendLog('自定义插件调用失败', error);
+                        setBridgeError(error.errorMessage || error.message || stringify(error));
+                    });
+            }
+
+            function clearLogs() {
+                setLogs([]);
+                setBridgeError('');
+                setLastEvent(null);
+            }
+
+            return h('main', { className: 'page' },
+                h('section', { className: 'hero' },
+                    h('h1', null, 'hybird v2 React Bridge Demo'),
+                    h('p', null, '验证 React 挂载阶段、Promise、自定义插件和 Native 事件通信。'),
+                    h('div', { className: 'status' },
+                        h('span', { className: 'dot ' + (bridgeError ? 'error' : (ready ? 'ready' : '')) }),
+                        h('span', null, bridgeError ? 'Bridge 调用失败' : (ready ? 'Bridge Ready' : 'Bridge 初始化中'))
+                    ),
+                    bridgeError ? h('div', { className: 'event' }, bridgeError) : null
+                ),
+                h('section', { className: 'card' },
+                    h('h2', null, 'Native 调用'),
+                    h('div', { className: 'actions' },
+                        h('button', { onClick: callPromiseApi }, 'Promise Toast'),
+                        h('button', { onClick: checkPlugins }, '检查插件能力'),
+                        h('button', { className: 'secondary', onClick: callDeviceInfo }, '调用自定义插件')
+                    ),
+                    h('p', { className: 'muted' }, '页面首次挂载时已自动调用 checkAvailable，用于验证首屏时序。')
+                ),
+                h('section', { className: 'card' },
+                    h('h2', null, 'Native → React 事件'),
+                    lastEvent === null
+                        ? h('p', { className: 'muted' }, '点击 Android 页面底部的 sentEvent 按钮，观察 refreshToken 事件。')
+                        : h('div', { className: 'event' }, 'refreshToken：' + stringify(lastEvent))
+                ),
+                h('section', { className: 'card' },
+                    h('div', { className: 'log-actions' },
+                        h('button', { className: 'secondary', onClick: clearLogs }, '清空日志')
+                    ),
+                    h('pre', null, logs.length ? logs.join('\n\n') : '等待 Bridge 日志...')
+                )
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+    }());
+</script>
+</body>
+</html>
