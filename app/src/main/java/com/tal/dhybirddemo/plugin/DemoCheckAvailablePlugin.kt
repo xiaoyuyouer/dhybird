@@ -23,13 +23,24 @@ class DemoCheckAvailablePlugin(
                 responder.failure("INVALID_ARGUMENT", "available must be an array")
                 return
             }
-            val checkList = JSONArray()
+            val plugins = JSONArray()
             for (index in 0 until available.length()) {
-                checkList.put(
-                    pluginRegistry.contains(available.optString(index, "")).toString()
+                val pluginName = available.opt(index)
+                if (pluginName !is String || pluginName.trim().isEmpty()) {
+                    responder.failure(
+                        "INVALID_ARGUMENT",
+                        "available[$index] must be a non-empty string"
+                    )
+                    return
+                }
+                val normalizedName = pluginName.trim()
+                plugins.put(
+                    JSONObject()
+                        .put("name", normalizedName)
+                        .put("available", pluginRegistry.contains(normalizedName))
                 )
             }
-            result.put("available", checkList)
+            result.put("plugins", plugins)
         } catch (error: JSONException) {
             responder.failure("INVALID_ARGUMENT", error.message)
             return

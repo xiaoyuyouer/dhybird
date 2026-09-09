@@ -19,20 +19,21 @@ class PluginRegistry {
 
     /** 注册或替换同名插件。 */
     fun register(plugin: BridgePlugin?) {
-        require(plugin != null && plugin.name().trim().isNotEmpty()) {
-            "plugin and plugin name are required"
-        }
-        plugins[plugin.name()] = plugin
+        requireNotNull(plugin) { "plugin is required" }
+        val name = plugin.name().trim()
+        require(name.isNotEmpty()) { "plugin name is required" }
+        plugins[name] = plugin
     }
 
     /** 移除指定插件；不存在时不报错。 */
     fun unregister(name: String?) {
-        if (name != null) plugins.remove(name)
+        name?.trim()?.takeIf { it.isNotEmpty() }?.let { plugins.remove(it) }
     }
 
-    fun contains(name: String?): Boolean = name != null && plugins.containsKey(name)
+    fun contains(name: String?): Boolean =
+        name?.trim()?.takeIf { it.isNotEmpty() }?.let { plugins.containsKey(it) } == true
 
-    fun names(): Set<String> = Collections.unmodifiableSet(plugins.keys)
+    fun names(): Set<String> = Collections.unmodifiableSet(plugins.keys.toSet())
 
     /** 根据请求中的插件名查找并按插件声明的线程执行。 */
     fun dispatch(request: BridgeRequest, responder: BridgeResponder) {
@@ -45,17 +46,29 @@ class PluginRegistry {
         val task = Runnable {
             try {
                 plugin.execute(request, responder)
-            } catch (error: Throwable) {
+            } catch (error: Exception) {
                 responder.failure("PLUGIN_EXECUTION_FAILED", safeMessage(error))
             }
         }
 
-        when (plugin.executionThread()) {
-            BridgePlugin.ExecutionThread.CALLER -> task.run()
-            BridgePlugin.ExecutionThread.BACKGROUND -> backgroundExecutor.execute(task)
-            BridgePlugin.ExecutionThread.MAIN -> {
-                if (Looper.myLooper() == Looper.getMainLooper()) task.run() else mainHandler.post(task)
+        val executionThread = try {
+            plugin.executionThread()
+        } catch (error: Exception) {
+            responder.failure("PLUGIN_CONFIGURATION_FAILED", safeMessage(error))
+            return
+        }
+
+        try {
+            when (executionThread) {
+                BridgePlugin.ExecutionThread.CALLER -> task.run()
+                BridgePlugin.ExecutionThread.BACKGROUND -> backgroundExecutor.execute(task)
+                BridgePlugin.ExecutionThread.MAIN -> {
+                    if (Looper.myLooper() == Looper.getMainLooper()) task.run()
+                    else mainHandler.post(task)
+                }
             }
+        } catch (error: Exception) {
+            responder.failure("PLUGIN_DISPATCH_FAILED", safeMessage(error))
         }
     }
 
@@ -65,6 +78,6 @@ class PluginRegistry {
         plugins.clear()
     }
 
-    private fun safeMessage(error: Throwable): String =
+    private fun safeMessage(error: Exception): String =
         error.message?.takeIf { it.isNotEmpty() } ?: error.javaClass.simpleName
 }

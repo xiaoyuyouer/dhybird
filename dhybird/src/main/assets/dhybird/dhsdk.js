@@ -10,13 +10,12 @@
    *   EventBus     负责 Native -> H5 的业务事件
    *   RequestStore 负责请求 Promise、连续响应和超时
    *   BridgeClient 负责 ready、排队、发送和销毁
-   *   API          负责把业务方法映射到 Native 插件
+   *   API          只暴露通用 ready/on/invoke 入口
    *
    * v2 不再提供旧版 callback、_dhbridge、DHBridgeReady 或 JavascriptInterface 回退。
-   * 页面只需要使用 dhsdk.ready()、dhsdk.invoke()、dhsdk.on() 和内置 Promise API。
+   * 页面只需要使用 dhsdk.ready()、dhsdk.invoke() 和 dhsdk.on()。
    */
 
-  var SDK_VERSION = '2.0.0';
   var DEFAULT_TIMEOUT_MS = 15000;
   var MAX_PENDING_REQUESTS = 100;
 
@@ -36,6 +35,11 @@
       errorCode: code,
       errorMessage: message || code
     };
+  }
+
+  /** Bridge 协议只接受 JSON object 作为插件参数，避免 Native 静默丢失数组/标量。 */
+  function isObjectData(value) {
+    return Object.prototype.toString.call(value) === '[object Object]';
   }
 
   /** Native 返回字符串时解析 JSON；已经是对象时直接复用。 */
@@ -62,7 +66,31 @@
     if (typeof response.callbackId !== 'string') {
       return null;
     }
+    if (response.callbackId.trim() === '') {
+      return null;
+    }
+    if (response.status !== 0 && response.status !== 1) {
+      return null;
+    }
+    if (response.complete !== 0 && response.complete !== 1) {
+      return null;
+    }
     return response;
+  }
+
+  /** 校验独立事件协议，事件不再伪装成请求响应。 */
+  function normalizeEvent(message) {
+    var event = parseJson(message);
+    if (!event || typeof event !== 'object') {
+      return null;
+    }
+    if (event.type !== 'event' || typeof event.eventName !== 'string') {
+      return null;
+    }
+    if (event.eventName.trim() === '') {
+      return null;
+    }
+    return event;
   }
 
   /**
@@ -122,9 +150,10 @@
 
   /** 注册事件监听，返回取消监听函数。 */
   EventBus.prototype.on = function (eventName, listener) {
-    if (!eventName || typeof listener !== 'function') {
+    if (typeof eventName !== 'string' || eventName.trim() === '' || typeof listener !== 'function') {
       throw new TypeError('eventName and listener are required');
     }
+    eventName = eventName.trim();
     if (!this.listeners[eventName]) {
       this.listeners[eventName] = [];
     }
@@ -200,8 +229,10 @@
 
     this.armTimeout(response.callbackId, record);
     if (response.status !== 1) {
-      record.reject(response);
-      this.remove(response.callbackId);
+      if (response.complete !== 0) {
+        record.reject(response);
+        this.remove(response.callbackId);
+      }
       return;
     }
 
@@ -335,8 +366,11 @@
 
   /** 创建请求；如果 transport 尚未 ready，就先进入 FIFO 队列。 */
   BridgeClient.prototype.invoke = function (plugin, data) {
-    if (!plugin || typeof plugin !== 'string') {
+    if (typeof plugin !== 'string' || plugin.trim() === '') {
       return Promise.reject(createError('INVALID_REQUEST', 'plugin is required'));
+    }
+    if (data !== undefined && data !== null && !isObjectData(data)) {
+      return Promise.reject(createError('INVALID_ARGUMENT', 'data must be an object'));
     }
     if (this.state === State.FAILED) {
       return Promise.reject(createError('TRANSPORT_UNAVAILABLE', 'Android WebMessageListener is unavailable'));
@@ -347,9 +381,8 @@
 
     var request = {
       callbackId: this.nextRequestId(),
-      plugin: plugin,
-      data: data || {},
-      sdkVersion: SDK_VERSION
+      plugin: plugin.trim(),
+      data: data || {}
     };
     var promise = this.requests.create(request.callbackId);
     var dropped = this.pending.push({
@@ -397,9 +430,9 @@
 
   /** Native 通过 evaluateJavascript 回传业务事件。 */
   BridgeClient.prototype.handleEvent = function (message) {
-    var response = normalizeResponse(message);
-    if (response) {
-      this.events.emit(response.callbackId, response.data);
+    var event = normalizeEvent(message);
+    if (event) {
+      this.events.emit(event.eventName, event.data);
     }
   };
 

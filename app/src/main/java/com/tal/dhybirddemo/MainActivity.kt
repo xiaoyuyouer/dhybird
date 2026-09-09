@@ -49,7 +49,7 @@ class MainActivity : AppCompatActivity(), HybridCallbacks {
         hybridController?.start()
 
         findViewById<Button>(R.id.btn_sent).setOnClickListener {
-            hybridController?.sendEventMessageToJS("refreshToken", null)
+            hybridController?.sendEventMessageToJS("refreshToken")
         }
     }
 

@@ -15,7 +15,7 @@ class BridgeAccessPolicyTest {
 
     @Test
     fun allowlistCopiesConfiguredRules() {
-        val policy = BridgeAccessPolicy.allowlist(setOf("https://example.com"))
+        val policy = BridgeAccessPolicy.allowlist(setOf(" https://example.com "))
 
         assertEquals(BridgeAccessPolicy.Mode.ALLOWLIST, policy.mode)
         assertTrue(policy.allowedOriginRules.contains("https://example.com"))

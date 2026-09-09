@@ -8,7 +8,7 @@ interface BridgeResponder {
 
     fun success(data: JSONObject?, complete: Boolean)
 
-    fun failure(errorCode: String?, errorMessage: String?)
+    fun failure(errorCode: String, errorMessage: String?)
 
-    fun failure(errorCode: String?, errorMessage: String?, complete: Boolean)
+    fun failure(errorCode: String, errorMessage: String?, complete: Boolean)
 }

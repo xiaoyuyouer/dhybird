@@ -144,6 +144,7 @@ class HybridController(
 
     /** 注册宿主 App 自定义插件，必须在需要调用前完成注册。 */
     fun registerPlugin(plugin: com.dahai.dhybird.bridge.BridgePlugin) {
+        check(!destroyed) { "HybridController has been destroyed" }
         pluginRegistry.register(plugin)
     }
 
@@ -159,7 +160,9 @@ class HybridController(
     fun canGoBack(): Boolean = webView?.canGoBack() == true
 
     fun goBack() {
-        webView?.takeIf { it.canGoBack() }?.goBack()
+        runOnMain {
+            webView?.takeIf { it.canGoBack() }?.goBack()
+        }
     }
 
     fun onResume() {
@@ -199,8 +202,8 @@ class HybridController(
     }
 
     /** 向当前 H5 页面发送一个 Native -> H5 事件。 */
-    fun sendEventMessageToJS(eventName: String, params: JSONObject?) {
-        bridgeRuntime?.sendEvent(eventName, params)
+    fun sendEventMessageToJS(eventName: String, data: JSONObject? = null) {
+        bridgeRuntime?.sendEvent(eventName, data)
     }
 
     fun onPageLoadError() {

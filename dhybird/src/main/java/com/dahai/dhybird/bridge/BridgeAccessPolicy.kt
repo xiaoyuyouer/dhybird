@@ -19,7 +19,7 @@ class BridgeAccessPolicy private constructor(
         @JvmStatic
         fun allowlist(originRules: Collection<String>?): BridgeAccessPolicy {
             require(!originRules.isNullOrEmpty()) { "originRules must not be empty" }
-            val rules = originRules.filter { it.isNotEmpty() }.toSet()
+            val rules = originRules.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             require(rules.isNotEmpty()) { "originRules must contain a valid rule" }
             return BridgeAccessPolicy(Mode.ALLOWLIST, rules)
         }

@@ -1,14 +1,15 @@
-# dhybird v2
+# dhybird Hybrid Bridge
 
 一个基于 Android WebView 的全新 Hybrid 容器和异步 JavaScript Bridge 框架。
 
-v2 的核心原则：
+核心原则：
 
 - SDK 只负责 WebView、Bridge 传输、生命周期和插件调度；
 - SDK 不内置业务 API，也不内置 Toast、登录、分享等业务插件；
 - 宿主 App 显式注册自己拥有的 Native 能力；
-- H5 只通过 Promise 调用插件，不依赖 Native 对象和历史回调协议；
-- 不使用 X5/TBS、运行时反射或 addJavascriptInterface 回退。
+- H5 通过 Promise API 调用插件，不直接依赖 Native 实现细节；
+- Native 通信使用 WebMessageListener；
+- 宿主 App 通过显式注册提供业务能力。
 
 ## 目录
 
@@ -23,7 +24,6 @@ v2 的核心原则：
 - [安全策略](#安全策略)
 - [Demo 工程](#demo-工程)
 - [构建与测试](#构建与测试)
-- [v2 迁移说明](#v2-迁移说明)
 - [已知限制](#已知限制)
 
 ## 项目结构
@@ -210,7 +210,7 @@ controller.registerPlugin(DeviceInfoPlugin())
 controller.start()
 ~~~
 
-所有插件都必须在 start() 之前注册。注册表使用显式实例，不读取 JSON 配置，不使用 Class.forName()，也不使用运行时反射。
+所有插件都必须在 start() 之前注册。注册表使用宿主 App 显式提供的插件实例和名称。
 
 ### 3. 转发生命周期
 
@@ -264,7 +264,7 @@ try {
 }
 ~~~
 
-ready() 没有回调参数，也不会返回 _dhbridge 对象。
+ready() 返回一个 Promise<void>，只表示当前页面的 Bridge 已经可以使用。
 
 ### dhsdk.invoke(pluginName, data)
 
@@ -295,6 +295,22 @@ SDK 不提供 dhsdk.showToast()、dhsdk.login() 等业务快捷方法。即使�
 await dhsdk.invoke('common.showToast', {
   message: 'hello'
 });
+~~~
+
+例如，Demo 的 `common.checkAvailable` 会返回带插件名的结果，避免只能依赖数组下标判断：
+
+~~~javascript
+const result = await dhsdk.invoke('common.checkAvailable', {
+  available: ['common.showToast', 'common.checkAvailable', 'user.getToken']
+});
+
+// {
+//   plugins: [
+//     { name: 'common.showToast', available: true },
+//     { name: 'common.checkAvailable', available: true },
+//     { name: 'user.getToken', available: false }
+//   ]
+// }
 ~~~
 
 ### dhsdk.on(eventName, listener)
@@ -488,6 +504,21 @@ controller.sendEventMessageToJS(
     "refreshToken",
     JSONObject().put("token", token)
 )
+
+// 无数据事件可以省略第二个参数：
+// controller.sendEventMessageToJS("logout")
+~~~
+
+事件使用独立的消息结构，不复用请求响应的 callbackId：
+
+~~~json
+{
+  "type": "event",
+  "eventName": "refreshToken",
+  "data": {
+    "token": "..."
+  }
+}
 ~~~
 
 ### 销毁流程
@@ -509,7 +540,7 @@ controller.destroy() 会执行：
 
 ### WebMessageListener
 
-v2 只使用 AndroidX WebViewCompat.addWebMessageListener()：
+Bridge 使用 AndroidX WebViewCompat.addWebMessageListener()：
 
 - transport 在 loadUrl() 前注册；
 - 不使用 addJavascriptInterface；
@@ -519,7 +550,7 @@ v2 只使用 AndroidX WebViewCompat.addWebMessageListener()：
 
 ### Origin 白名单
 
-默认配置是 BridgeAccessPolicy.allOrigins()，方便本地 Demo 和迁移测试。这个配置会让所有被 WebView 加载的页面都可能接触 Bridge，生产环境不建议使用。
+默认配置是 BridgeAccessPolicy.allOrigins()，方便本地 Demo 使用。这个配置会让所有被 WebView 加载的页面都可能接触 Bridge，生产环境不建议使用。
 
 生产环境使用：
 
@@ -620,66 +651,14 @@ dhybird/build/outputs/aar/dhybird-debug.aar
 
 当前工程已经验证：
 
-- Android 和 Library 全量 Kotlin；
+- Android 和 Library 全量使用 Kotlin；
 - minSdkVersion 为 26；
-- X5/TBS 依赖和 Native 库已删除；
-- APK 不包含旧 dhbridge.js、dhplugin.json 和 X5/TBS 资源；
 - SDK AAR 包含 assets/dhybird/dhsdk.js；
 - Bridge 首屏队列、Promise、插件注册、生命周期和错误路径可构建验证。
 
-## v2 迁移说明
-
-这是一次破坏性升级，不提供旧协议兼容层。
-
-### 已删除
-
-- DHybird.Builder；
-- X5/TBS WebView；
-- dhplugin.json；
-- Class.forName() 反射插件加载；
-- addJavascriptInterface；
-- 旧版 DHBridge、DHJSInterface、_dhbridge；
-- DHBridgeReady DOM 事件；
-- ready(callback)；
-- success/fail/complete H5 回调字段；
-- onListenEvent；
-- dhsdk.showToast() 等内置业务快捷 API；
-- SDK 内置 Toast、登录、分享等具体业务插件。
-
-### 新写法
-
-旧写法：
-
-~~~javascript
-dhsdk.showToast({
-  message: 'hello',
-  success(data) {}
-});
-~~~
-
-新写法：
-
-~~~javascript
-const data = await dhsdk.invoke('common.showToast', {
-  message: 'hello'
-});
-~~~
-
-旧的 JSON 插件配置：
-
-~~~text
-dhplugin.json -> Class.forName()
-~~~
-
-新的显式注册：
-
-~~~kotlin
-controller.registerPlugin(MyPlugin())
-~~~
-
 ## 已知限制
 
-- v2 只支持 Android WebView 的 WebMessageListener 能力；不支持时会直接失败，不再降级到旧接口；
+- 运行环境必须支持 Android WebView 的 WebMessageListener 能力；
 - SDK 不负责业务权限、登录态和敏感数据授权；
 - 默认 allOrigins() 只适合本地 Demo，生产环境必须配置 Origin 白名单；
 - React Demo 的 React 运行时依赖网络 CDN；
